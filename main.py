@@ -14,7 +14,7 @@ from supabase import create_client, Client
 import google.generativeai as genai
 import base64
 
-st.set_page_config(layout="wide", page_title="Financial Data Intelligence")
+st.set_page_config(layout="wide", page_title="Fund Fact Sheet Data")
 
 # ==========================================
 # 1. INISIALISASI INFRASTRUKTUR
