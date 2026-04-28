@@ -13,6 +13,7 @@ from groq import Groq
 from supabase import create_client, Client
 import google.generativeai as genai
 import base64
+import calendar
 
 st.set_page_config(layout="wide", page_title="Fund Fact Sheet Data")
 
@@ -72,12 +73,14 @@ ATURAN NORMALISASI KOMPOSISI (SANGAT KRITIS):
    - Obligasi Korporat = 54.89% * 52.86% = 29.02%
    Hitung dan masukkan hasil kalinya. JANGAN memasukkan angka 47.14% mentah-mentah.
 4. Isi dengan "0.00%" jika kategori tidak ada.
+5. Untuk jenis produk, gunakan hanya dari antara lima jenis berikut yaitu Pasar Uang, Saham, Fixed Income, Campuran, atau Indeks. .
 
 STRUKTUR JSON WAJIB:
 {
   "manajer_investasi": "Pilih 1 dari 11 daftar baku. WAJIB TERISI.",
   "nama_reksa_dana": "Nama lengkap produk",
-  "jenis_reksa_dana": "Ekstrak kategori produk (Pasar Uang, Saham, Campuran, Pendapatan Tetap, atau Indeks)",
+  "jenis_reksa_dana": "Ekstrak jenis produk (Pasar Uang, Saham, Campuran, Pendapatan Tetap, atau Indeks)",
+  "mata_uang": "Ekstrak mata uang produk (contoh: IDR, USD)",
   "periode": "YYYY-MM-DD",
   "aum": "TULISKAN TEKS MENTAH DARI DOKUMEN, contoh: '32.83 Miliar' atau '1.2 Triliun'. Jangan ubah ke angka nol.",
   "nab_per_unit": 000.00,
@@ -318,6 +321,7 @@ with tab_ekstraksi:
                         fund_type = st.text_input("Jenis Reksa Dana", data.get("jenis_reksa_dana", ""), key=f"type_{file_key}")
                     
                     with c2:
+                        fund_currency = st.text_input("Mata Uang", data.get("mata_uang", "IDR"), key=f"currency_{file_key}")
                         tu_val = aum / nav if nav != 0 else 0.0
                         # PERBAIKAN: Gunakan key dinamis agar Streamlit dipaksa merender ulang nilai terbaru
                         st.text_input("Total Unit", value=format_angka(tu_val), key=f"tu_{file_key}_{tu_val}", disabled=True)
@@ -331,19 +335,27 @@ with tab_ekstraksi:
                         df_hold = pd.DataFrame(data.get("top_holdings", []))
                         edited_hold = st.data_editor(df_hold, num_rows="dynamic", use_container_width=True, hide_index=True, key=f"hold_{file_key}")
 
-                    if st.button("Simpan ke Database", type="primary", key=f"btn_{file_key}"):
+                    if st.button("Simpan", type="primary", key=f"btn_{file_key}"):
                         try:
                             res_mi = supabase.table("manajer_investasi").select("id").eq("nama", mi_name).execute()
                             mi_id = res_mi.data[0]["id"] if res_mi.data else supabase.table("manajer_investasi").insert({"nama": mi_name}).execute().data[0]["id"]
 
                             res_p = supabase.table("produk_reksadana").select("id").eq("nama_produk", fund_name).execute()
-                            produk_id = res_p.data[0]["id"] if res_p.data else supabase.table("produk_reksadana").insert({"mi_id": mi_id, "nama_produk": fund_name, "kategori": fund_type}).execute().data[0]["id"]
+                            if res_p.data:
+                                produk_id = res_p.data[0]["id"]
+                                # Update data produk jika ada perubahan kategori atau mata uang
+                                supabase.table("produk_reksadana").update({"kategori": fund_type, "mata_uang": fund_currency}).eq("id", produk_id).execute()
+                            else:
+                                produk_id = supabase.table("produk_reksadana").insert({"mi_id": mi_id, "nama_produk": fund_name, "kategori": fund_type, "mata_uang": fund_currency}).execute().data[0]["id"]
 
                             formatted_date = periode.strftime("%Y-%m-%d")
-                            check_exist = supabase.table("metrik_bulanan").select("id").eq("produk_id", produk_id).eq("periode", formatted_date).execute()
+                            first_day = periode.replace(day=1).strftime("%Y-%m-%d")
+                            last_day = periode.replace(day=calendar.monthrange(periode.year, periode.month)[1]).strftime("%Y-%m-%d")
+                            
+                            check_exist = supabase.table("metrik_bulanan").select("id").eq("produk_id", produk_id).gte("periode", first_day).lte("periode", last_day).execute()
 
                             if check_exist.data:
-                                st.warning(f"Data untuk '{fund_name}' periode {formatted_date} sudah ada di database. Dibatalkan.")
+                                st.warning(f"Data untuk '{fund_name}' pada bulan {periode.strftime('%B %Y')} sudah ada di database. Dibatalkan.")
                             else:
                                 payload_metrik = {
                                     "produk_id": produk_id, "periode": formatted_date,
@@ -363,17 +375,46 @@ with tab_dasbor:
     st.subheader("Analisis Kinerja & Portofolio Historis")
     
     try:
-        daftar_produk = supabase.table("produk_reksadana").select("id, nama_produk").execute().data
+        daftar_produk_raw = supabase.table("produk_reksadana").select("id, mi_id, nama_produk, kategori, mata_uang").execute().data
+        daftar_mi_raw = supabase.table("manajer_investasi").select("id, nama").execute().data
     except Exception as e:
         st.error(f"Gagal mengambil data produk: {e}")
-        daftar_produk = []
+        daftar_produk_raw = []
+        daftar_mi_raw = []
 
-    if daftar_produk:
-        opsi_produk = {p["nama_produk"]: p["id"] for p in daftar_produk}
-        produk_pilihan = st.selectbox("Pilih Reksa Dana", options=list(opsi_produk.keys()))
+    if daftar_produk_raw:
+        mi_dict = {mi["id"]: mi["nama"] for mi in daftar_mi_raw}
         
-        # PERBAIKAN: Menarik seluruh kolom metrik, bukan hanya komposisi
-        data_metrik = supabase.table("metrik_bulanan").select("periode, komposisi, aum, nab_per_unit, top_holdings").eq("produk_id", opsi_produk[produk_pilihan]).order("periode").execute().data
+        st.markdown("##### Filter Data")
+        col_f1, col_f2, col_f3 = st.columns(3)
+        with col_f1:
+            all_mi = ["Semua"] + sorted(list(set(mi_dict.values())))
+            filter_mi = st.selectbox("Manajer Investasi", options=all_mi, key="dash_f_mi")
+        with col_f2:
+            all_kat = ["Semua"] + sorted(list(set(str(p.get("kategori", "")) for p in daftar_produk_raw if p.get("kategori"))))
+            filter_kat = st.selectbox("Kategori / Tipe", options=all_kat, key="dash_f_kat")
+        with col_f3:
+            all_ccy = ["Semua"] + sorted(list(set(str(p.get("mata_uang", "")) for p in daftar_produk_raw if p.get("mata_uang"))))
+            filter_ccy = st.selectbox("Mata Uang", options=all_ccy, key="dash_f_ccy")
+            
+        daftar_produk = [
+            p for p in daftar_produk_raw
+            if (filter_mi == "Semua" or mi_dict.get(p.get("mi_id")) == filter_mi) and
+               (filter_kat == "Semua" or str(p.get("kategori", "")) == filter_kat) and
+               (filter_ccy == "Semua" or str(p.get("mata_uang", "")) == filter_ccy)
+        ]
+        
+        if not daftar_produk:
+            st.warning("Tidak ada reksa dana yang cocok dengan filter.")
+            opsi_produk = {}
+        else:
+            opsi_produk = {p["nama_produk"]: p["id"] for p in daftar_produk}
+            produk_pilihan = st.selectbox("Pilih Reksa Dana", options=list(opsi_produk.keys()), key="dash_prod")
+
+        data_metrik = []
+        if opsi_produk:
+            # PERBAIKAN: Menarik seluruh kolom metrik, bukan hanya komposisi
+            data_metrik = supabase.table("metrik_bulanan").select("periode, komposisi, aum, nab_per_unit, top_holdings").eq("produk_id", opsi_produk[produk_pilihan]).order("periode").execute().data
 
         if data_metrik:
             # Kalkulasi basis dataframe metrik mentah
@@ -534,18 +575,53 @@ with tab_dasbor:
 with tab_manajemen:
     st.subheader("Manajemen Data Historis (Update & Hapus)")
     
-    if daftar_produk:
-        opsi_produk_mgt = {p["nama_produk"]: p["id"] for p in daftar_produk}
-        produk_mgt_pilihan = st.selectbox("Pilih Reksa Dana", options=list(opsi_produk_mgt.keys()), key="mgt_prod")
-        produk_mgt_id = opsi_produk_mgt[produk_mgt_pilihan]
+    try:
+        daftar_produk_raw_mgt = supabase.table("produk_reksadana").select("id, mi_id, nama_produk, kategori, mata_uang").execute().data
+        daftar_mi_raw_mgt = supabase.table("manajer_investasi").select("id, nama").execute().data
+    except Exception as e:
+        st.error(f"Gagal mengambil data produk: {e}")
+        daftar_produk_raw_mgt = []
+        daftar_mi_raw_mgt = []
+
+    if daftar_produk_raw_mgt:
+        mi_dict_mgt = {mi["id"]: mi["nama"] for mi in daftar_mi_raw_mgt}
         
-        # Ambil daftar periode yang tersedia untuk produk tersebut
-        try:
-            res_periode = supabase.table("metrik_bulanan").select("id, periode").eq("produk_id", produk_mgt_id).order("periode").execute()
-            data_periode = res_periode.data
-        except Exception as e:
-            st.error(f"Gagal mengambil periode: {e}")
-            data_periode = []
+        st.markdown("##### Filter Data")
+        col_fm1, col_fm2, col_fm3 = st.columns(3)
+        with col_fm1:
+            all_mi_mgt = ["Semua"] + sorted(list(set(mi_dict_mgt.values())))
+            filter_mi_mgt = st.selectbox("Manajer Investasi", options=all_mi_mgt, key="mgt_f_mi")
+        with col_fm2:
+            all_kat_mgt = ["Semua"] + sorted(list(set(str(p.get("kategori", "")) for p in daftar_produk_raw_mgt if p.get("kategori"))))
+            filter_kat_mgt = st.selectbox("Kategori / Tipe", options=all_kat_mgt, key="mgt_f_kat")
+        with col_fm3:
+            all_ccy_mgt = ["Semua"] + sorted(list(set(str(p.get("mata_uang", "")) for p in daftar_produk_raw_mgt if p.get("mata_uang"))))
+            filter_ccy_mgt = st.selectbox("Mata Uang", options=all_ccy_mgt, key="mgt_f_ccy")
+            
+        daftar_produk_mgt = [
+            p for p in daftar_produk_raw_mgt
+            if (filter_mi_mgt == "Semua" or mi_dict_mgt.get(p.get("mi_id")) == filter_mi_mgt) and
+               (filter_kat_mgt == "Semua" or str(p.get("kategori", "")) == filter_kat_mgt) and
+               (filter_ccy_mgt == "Semua" or str(p.get("mata_uang", "")) == filter_ccy_mgt)
+        ]
+        
+        if not daftar_produk_mgt:
+            st.warning("Tidak ada reksa dana yang cocok dengan filter.")
+            opsi_produk_mgt = {}
+        else:
+            opsi_produk_mgt = {p["nama_produk"]: p["id"] for p in daftar_produk_mgt}
+            produk_mgt_pilihan = st.selectbox("Pilih Reksa Dana", options=list(opsi_produk_mgt.keys()), key="mgt_prod")
+            produk_mgt_id = opsi_produk_mgt[produk_mgt_pilihan]
+        
+        data_periode = []
+        if opsi_produk_mgt:
+            # Ambil daftar periode yang tersedia untuk produk tersebut
+            try:
+                res_periode = supabase.table("metrik_bulanan").select("id, periode").eq("produk_id", produk_mgt_id).order("periode").execute()
+                data_periode = res_periode.data
+            except Exception as e:
+                st.error(f"Gagal mengambil periode: {e}")
+                data_periode = []
             
         if data_periode:
             opsi_periode = {str(p["periode"]): p["id"] for p in data_periode}
