@@ -56,9 +56,8 @@ supabase: Client = init_supabase()
 gemini_model = init_gemini()
 groq_client = init_groq()
 
-# ==========================================
 # 2. PROMPT SISTEM (Logika Matematika & Jenis Reksa Dana)
-# ==========================================
+
 PROMPT_SISTEM = """
 Anda adalah analis data finansial tingkat lanjut. Ekstrak data Fund Fact Sheet ke dalam format JSON.
 
@@ -107,9 +106,8 @@ INSTRUKSI UMUM:
 4. DETEKSI MANAJER INVESTASI: Pindai logo (header), disclaimer (footer), atau deduksi dari nama produk. Hasil harus salah satu dari: Batavia, Ashmore, BRI, BNP Paribas, Eastspring, Allianz, Maybank Asset Management, Trimegah, Schroder, Mandiri, Manulife.
 """
 
-# ==========================================
 # FUNGSI PEMBANTU FORMAT & PARSING ANGKA
-# ==========================================
+
 def format_angka(angka):
     try:
         return f"{float(angka):,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
@@ -148,9 +146,8 @@ def konversi_aum_llm(teks_aum):
             return 0.0
     return 0.0
     
-# ==========================================
 # ANTARMUKA UTAMA
-# ==========================================
+
 st.title("Financial Data Intelligence")
 tab_ekstraksi, tab_dasbor, tab_manajemen = st.tabs(["Ekstraksi Data", "Dasbor Analisis", "Manajemen Data"])
 
@@ -264,8 +261,8 @@ with tab_ekstraksi:
                     matching_file = next((f for f in uploaded_files if f.name == data.get('filename')), None)
                     if matching_file:
                         base64_pdf = base64.b64encode(matching_file.getvalue()).decode('utf-8')
-                        # Menambahkan iframe untuk menampilkan PDF, toolbar=1 untuk fitur zoom dll
-                        pdf_display = f'<iframe src="data:application/pdf;base64,{base64_pdf}#toolbar=1" width="100%" height="800" type="application/pdf"></iframe>'
+                        # Menggunakan tag embed agar tidak diblokir oleh kebijakan keamanan browser (CSP/Chrome)
+                        pdf_display = f'<embed src="data:application/pdf;base64,{base64_pdf}#toolbar=1" type="application/pdf" width="100%" height="800px" />'
                         st.markdown(pdf_display, unsafe_allow_html=True)
                     else:
                         st.warning("Pratinjau PDF tidak tersedia.")
@@ -474,8 +471,8 @@ with tab_dasbor:
                 if baris_holdings:
                     df_holdings = pd.DataFrame(baris_holdings)
                     
-                    # Membuat Pivot Table: Baris = Instrumen, Kolom = Periode
-                    df_pivot_holdings = df_holdings.pivot(index="Instrumen", columns="Periode", values="Porsi").fillna("-")
+                    # Menggunakan pivot_table dengan aggfunc="first" untuk mencegah error "duplicate entries"
+                    df_pivot_holdings = df_holdings.pivot_table(index="Instrumen", columns="Periode", values="Porsi", aggfunc="first").fillna("-")
                     
                     # Pastikan kolom (Periode) berurutan
                     df_pivot_holdings = df_pivot_holdings.reindex(sorted(df_pivot_holdings.columns), axis=1)
