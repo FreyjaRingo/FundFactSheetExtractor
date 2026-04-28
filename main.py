@@ -12,6 +12,9 @@ import pdfplumber
 from groq import Groq
 from supabase import create_client, Client
 import google.generativeai as genai
+import base64
+
+st.set_page_config(layout="wide", page_title="Financial Data Intelligence")
 
 # ==========================================
 # 1. INISIALISASI INFRASTRUKTUR
@@ -149,7 +152,7 @@ def konversi_aum_llm(teks_aum):
 # ANTARMUKA UTAMA
 # ==========================================
 st.title("Financial Data Intelligence")
-tab_ekstraksi, tab_dasbor = st.tabs(["Ekstraksi Data", "Dasbor Analisis"])
+tab_ekstraksi, tab_dasbor, tab_manajemen = st.tabs(["Ekstraksi Data", "Dasbor Analisis", "Manajemen Data"])
 
 with tab_ekstraksi:
     st.write("Arsitektur Hybrid: Gemini Vision (Primary) -> Groq LLM (Fallback)")
@@ -249,74 +252,88 @@ with tab_ekstraksi:
         st.subheader("Verifikasi Kualitas Data")
         
         for i, data in enumerate(st.session_state['extracted_data_list']):
-            engine_label = "🟢 Gemini" if data.get('engine_used') == "Gemini" else "🟠 Groq"
+            engine_label = "Gemini" if data.get('engine_used') == "Gemini" else "Groq"
             file_key = data.get('filename', f'doc_{i}') 
             
             with st.expander(f"{engine_label} | 📄 {data.get('filename', f'Dokumen {i+1}')}", expanded=True):
                 
-                c1, c2, c3 = st.columns(3)
-                with c1:
-                    mi_name = st.text_input("Manajer Investasi", data.get("manajer_investasi", ""), key=f"mi_{file_key}")
-                    fund_name = st.text_input("Nama Produk", data.get("nama_reksa_dana", ""), key=f"fund_{file_key}")
-                    
-                    try:
-                        parsed_date = datetime.strptime(data.get("periode", ""), "%Y-%m-%d").date()
-                    except ValueError:
-                        parsed_date = date.today()
-                    periode = st.date_input("Periode", parsed_date, key=f"date_{file_key}")
-                    
-                with c2:
-                    aum_mentah_ai = data.get("aum", 0)
-                    aum_val = konversi_aum_llm(aum_mentah_ai)
-                    
-                    aum_str = st.text_input("Total AUM", value=format_angka(aum_val), key=f"aum_{file_key}")
-                    aum = parse_angka_ui(aum_str)
-                    
-                with c3:
-                    nav_val = float(data.get("nab_per_unit", 0))
-                    nav_str = st.text_input("NAV per Unit", value=format_angka(nav_val), key=f"nav_{file_key}")
-                    nav = parse_angka_ui(nav_str)
-                    
-                    fund_type = st.text_input("Jenis Reksa Dana", data.get("jenis_reksa_dana", ""), key=f"type_{file_key}")
+                col_pdf, col_form = st.columns([1, 1])
                 
-                with c2:
-                    tu_val = aum / nav if nav != 0 else 0.0
-                    # PERBAIKAN: Gunakan key dinamis agar Streamlit dipaksa merender ulang nilai terbaru
-                    st.text_input("Total Unit", value=format_angka(tu_val), key=f"tu_{file_key}_{tu_val}", disabled=True)
+                with col_pdf:
+                    # Cari file asli dari uploaded_files
+                    matching_file = next((f for f in uploaded_files if f.name == data.get('filename')), None)
+                    if matching_file:
+                        base64_pdf = base64.b64encode(matching_file.getvalue()).decode('utf-8')
+                        # Menambahkan iframe untuk menampilkan PDF, toolbar=1 untuk fitur zoom dll
+                        pdf_display = f'<iframe src="data:application/pdf;base64,{base64_pdf}#toolbar=1" width="100%" height="800" type="application/pdf"></iframe>'
+                        st.markdown(pdf_display, unsafe_allow_html=True)
+                    else:
+                        st.warning("Pratinjau PDF tidak tersedia.")
 
-                st.write("#### Struktur Aset & Holdings")
-                col_komp, col_hold = st.columns(2)
-                with col_komp:
-                    df_komp = pd.DataFrame(data.get("komposisi", {}).items(), columns=["Kategori Baku", "Porsi"])
-                    edited_komp = st.data_editor(df_komp, use_container_width=True, hide_index=True, key=f"komp_{file_key}")
-                with col_hold:
-                    df_hold = pd.DataFrame(data.get("top_holdings", []))
-                    edited_hold = st.data_editor(df_hold, num_rows="dynamic", use_container_width=True, hide_index=True, key=f"hold_{file_key}")
+                with col_form:
+                    c1, c2, c3 = st.columns(3)
+                    with c1:
+                        mi_name = st.text_input("Manajer Investasi", data.get("manajer_investasi", ""), key=f"mi_{file_key}")
+                        fund_name = st.text_input("Nama Produk", data.get("nama_reksa_dana", ""), key=f"fund_{file_key}")
+                        
+                        try:
+                            parsed_date = datetime.strptime(data.get("periode", ""), "%Y-%m-%d").date()
+                        except ValueError:
+                            parsed_date = date.today()
+                        periode = st.date_input("Periode", parsed_date, key=f"date_{file_key}")
+                        
+                    with c2:
+                        aum_mentah_ai = data.get("aum", 0)
+                        aum_val = konversi_aum_llm(aum_mentah_ai)
+                        
+                        aum_str = st.text_input("Total AUM", value=format_angka(aum_val), key=f"aum_{file_key}")
+                        aum = parse_angka_ui(aum_str)
+                        
+                    with c3:
+                        nav_val = float(data.get("nab_per_unit", 0))
+                        nav_str = st.text_input("NAV per Unit", value=format_angka(nav_val), key=f"nav_{file_key}")
+                        nav = parse_angka_ui(nav_str)
+                        
+                        fund_type = st.text_input("Jenis Reksa Dana", data.get("jenis_reksa_dana", ""), key=f"type_{file_key}")
+                    
+                    with c2:
+                        tu_val = aum / nav if nav != 0 else 0.0
+                        # PERBAIKAN: Gunakan key dinamis agar Streamlit dipaksa merender ulang nilai terbaru
+                        st.text_input("Total Unit", value=format_angka(tu_val), key=f"tu_{file_key}_{tu_val}", disabled=True)
 
-                if st.button("Simpan ke Database", type="primary", key=f"btn_{file_key}"):
-                    try:
-                        res_mi = supabase.table("manajer_investasi").select("id").eq("nama", mi_name).execute()
-                        mi_id = res_mi.data[0]["id"] if res_mi.data else supabase.table("manajer_investasi").insert({"nama": mi_name}).execute().data[0]["id"]
+                    st.write("#### Struktur Aset & Holdings")
+                    col_komp, col_hold = st.columns(2)
+                    with col_komp:
+                        df_komp = pd.DataFrame(data.get("komposisi", {}).items(), columns=["Kategori Baku", "Porsi"])
+                        edited_komp = st.data_editor(df_komp, use_container_width=True, hide_index=True, key=f"komp_{file_key}")
+                    with col_hold:
+                        df_hold = pd.DataFrame(data.get("top_holdings", []))
+                        edited_hold = st.data_editor(df_hold, num_rows="dynamic", use_container_width=True, hide_index=True, key=f"hold_{file_key}")
 
-                        res_p = supabase.table("produk_reksadana").select("id").eq("nama_produk", fund_name).execute()
-                        produk_id = res_p.data[0]["id"] if res_p.data else supabase.table("produk_reksadana").insert({"mi_id": mi_id, "nama_produk": fund_name, "kategori": fund_type}).execute().data[0]["id"]
+                    if st.button("Simpan ke Database", type="primary", key=f"btn_{file_key}"):
+                        try:
+                            res_mi = supabase.table("manajer_investasi").select("id").eq("nama", mi_name).execute()
+                            mi_id = res_mi.data[0]["id"] if res_mi.data else supabase.table("manajer_investasi").insert({"nama": mi_name}).execute().data[0]["id"]
 
-                        formatted_date = periode.strftime("%Y-%m-%d")
-                        check_exist = supabase.table("metrik_bulanan").select("id").eq("produk_id", produk_id).eq("periode", formatted_date).execute()
+                            res_p = supabase.table("produk_reksadana").select("id").eq("nama_produk", fund_name).execute()
+                            produk_id = res_p.data[0]["id"] if res_p.data else supabase.table("produk_reksadana").insert({"mi_id": mi_id, "nama_produk": fund_name, "kategori": fund_type}).execute().data[0]["id"]
 
-                        if check_exist.data:
-                            st.warning(f"Data untuk '{fund_name}' periode {formatted_date} sudah ada di database. Dibatalkan.")
-                        else:
-                            payload_metrik = {
-                                "produk_id": produk_id, "periode": formatted_date,
-                                "aum": aum, "nab_per_unit": nav,
-                                "komposisi": edited_komp.to_dict(orient='records'),
-                                "top_holdings": edited_hold.to_dict(orient='records')
-                            }
-                            supabase.table("metrik_bulanan").insert(payload_metrik).execute()
-                            st.success(f"Data baru {fund_name} ditambahkan.")
-                    except Exception as e:
-                        st.error(f"Database Error: {e}")
+                            formatted_date = periode.strftime("%Y-%m-%d")
+                            check_exist = supabase.table("metrik_bulanan").select("id").eq("produk_id", produk_id).eq("periode", formatted_date).execute()
+
+                            if check_exist.data:
+                                st.warning(f"Data untuk '{fund_name}' periode {formatted_date} sudah ada di database. Dibatalkan.")
+                            else:
+                                payload_metrik = {
+                                    "produk_id": produk_id, "periode": formatted_date,
+                                    "aum": aum, "nab_per_unit": nav,
+                                    "komposisi": edited_komp.to_dict(orient='records'),
+                                    "top_holdings": edited_hold.to_dict(orient='records')
+                                }
+                                supabase.table("metrik_bulanan").insert(payload_metrik).execute()
+                                st.success(f"Data baru {fund_name} ditambahkan.")
+                        except Exception as e:
+                            st.error(f"Database Error: {e}")
 
 # ==========================================
 # 4. TAB 2: DASBOR ANALISIS
@@ -342,6 +359,28 @@ with tab_dasbor:
             df_raw = pd.DataFrame(data_metrik)
             df_raw['Total Unit'] = df_raw.apply(lambda x: x['aum'] / x['nab_per_unit'] if x['nab_per_unit'] > 0 else 0, axis=1)
 
+            # Konversi kolom list/dict menjadi string agar tidak error saat disimpan ke excel
+            df_export = df_raw.copy()
+            if 'komposisi' in df_export.columns:
+                df_export['komposisi'] = df_export['komposisi'].astype(str)
+            if 'top_holdings' in df_export.columns:
+                df_export['top_holdings'] = df_export['top_holdings'].astype(str)
+
+            # Siapkan file Excel di dalam memory buffer
+            buffer = io.BytesIO()
+            with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
+                df_export.to_excel(writer, index=False, sheet_name='Data Metrik')
+            
+            # Tombol unduh data mentah
+            st.download_button(
+                label="📥 Download Data Excel (Raw)",
+                data=buffer.getvalue(),
+                file_name=f"{produk_pilihan}_Data.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
+
+            st.divider()
+
             # Membagi Dasbor menjadi 3 sub-tab agar rapi
             subtab_alokasi, subtab_kinerja, subtab_holdings = st.tabs(["Alokasi Aset", "Tren AUM & NAV", "Top 10 Holdings"])
 
@@ -358,20 +397,24 @@ with tab_dasbor:
                         except ValueError:
                             porsi_float = 0.0
                             
-                        baris_data.append({
-                            "Periode": row["periode"],
-                            "Kategori Aset": item.get("Kategori Baku", ""),
-                            "Persentase (%)": porsi_float
-                        })
+                        # Abaikan alokasi yang bernilai 0%
+                        if porsi_float > 0:
+                            baris_data.append({
+                                "Periode": row["periode"],
+                                "Kategori Aset": item.get("Kategori Baku", ""),
+                                "Persentase (%)": porsi_float
+                            })
 
                 if baris_data:
                     df_komposisi = pd.DataFrame(baris_data).sort_values("Periode")
                     fig = px.bar(
                         df_komposisi, x="Periode", y="Persentase (%)", color="Kategori Aset",
-                        title=f"Evolusi Alokasi Aset: {produk_pilihan}", text_auto='.2f',
+                        title=f"Alokasi Aset: {produk_pilihan}", text_auto='.2f',
                         category_orders={"Kategori Aset": ["Saham", "Obligasi Korporat", "Obligasi Negara", "Pasar Uang", "Lainnya", "Kas"]}
                     )
                     fig.update_layout(barmode='stack', hovermode="x unified")
+                    # Hanya tampilkan Kategori dan Persentase saat dihover (tanpa info tambahan x-axis yang berlebihan)
+                    fig.update_traces(hovertemplate="<b>%{fullData.name}</b>: %{y:.2f}%<extra></extra>")
                     st.plotly_chart(fig, use_container_width=True)
 
             # ------------------------------------
@@ -387,27 +430,29 @@ with tab_dasbor:
                     secondary_y=False,
                 )
                 
-                # Tambahkan NAV sebagai Line Chart (y-axis sekunder)
+                # Tambahkan Total Unit sebagai Line Chart (y-axis sekunder)
                 fig_gabungan.add_trace(
-                    go.Scatter(x=df_raw["periode"], y=df_raw["nab_per_unit"], name="NAV per Unit", mode="lines+markers", marker_color="orange"),
+                    go.Scatter(x=df_raw["periode"], y=df_raw["Total Unit"], name="Total Unit Beredar", mode="lines+markers", marker_color="green"),
                     secondary_y=True,
                 )
                 
                 # Konfigurasi layout
                 fig_gabungan.update_layout(
-                    title_text="Pertumbuhan AUM dan NAV per Unit",
+                    title_text="Pertumbuhan AUM dan Total Unit",
                     hovermode="x unified",
                     legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
                 )
                 
                 # Set judul axis
                 fig_gabungan.update_yaxes(title_text="AUM", secondary_y=False)
-                fig_gabungan.update_yaxes(title_text="NAV per Unit", secondary_y=True)
+                fig_gabungan.update_yaxes(title_text="Total Unit", secondary_y=True)
                 
                 st.plotly_chart(fig_gabungan, use_container_width=True)
 
-                fig_unit = px.line(df_raw, x="periode", y="Total Unit", title="Total Unit Beredar", markers=True)
-                st.plotly_chart(fig_unit, use_container_width=True)
+                # Pisahkan NAV kembali
+                fig_nav = px.line(df_raw, x="periode", y="nab_per_unit", title="Pertumbuhan NAV per Unit", markers=True)
+                fig_nav.update_traces(line_color="orange")
+                st.plotly_chart(fig_nav, use_container_width=True)
 
             # ------------------------------------
             # SUB-TAB 3: EVOLUSI TOP HOLDINGS
@@ -432,9 +477,122 @@ with tab_dasbor:
                     # Membuat Pivot Table: Baris = Instrumen, Kolom = Periode
                     df_pivot_holdings = df_holdings.pivot(index="Instrumen", columns="Periode", values="Porsi").fillna("-")
                     
-                    st.dataframe(df_pivot_holdings, use_container_width=True)
+                    # Pastikan kolom (Periode) berurutan
+                    df_pivot_holdings = df_pivot_holdings.reindex(sorted(df_pivot_holdings.columns), axis=1)
+                    
+                    # Fungsi untuk memberi warna merah/hijau berdasarkan perbandingan bulan sebelumnya
+                    def style_holdings(row):
+                        styles = [''] * len(row)
+                        for i in range(1, len(row)):
+                            val_curr = str(row.iloc[i]).replace('%', '').strip()
+                            val_prev = str(row.iloc[i-1]).replace('%', '').strip()
+                            
+                            if val_curr != '-' and val_prev != '-':
+                                try:
+                                    curr_float = float(val_curr.replace(',', '.'))
+                                    prev_float = float(val_prev.replace(',', '.'))
+                                    if curr_float > prev_float:
+                                        styles[i] = 'color: #00C04B; font-weight: bold;' # Hijau
+                                    elif curr_float < prev_float:
+                                        styles[i] = 'color: #FF4B4B; font-weight: bold;' # Merah
+                                except ValueError:
+                                    pass
+                        return styles
+                        
+                    styled_df = df_pivot_holdings.style.apply(style_holdings, axis=1)
+                    st.dataframe(styled_df, use_container_width=True)
                 else:
                     st.info("Data Top Holdings belum tersedia untuk ditarik.")
 
         else:
             st.info("Belum ada data metrik historis untuk produk ini.")
+
+# ==========================================
+# 5. TAB 3: MANAJEMEN DATA (UPDATE & DELETE)
+# ==========================================
+with tab_manajemen:
+    st.subheader("Manajemen Data Historis (Update & Hapus)")
+    
+    if daftar_produk:
+        opsi_produk_mgt = {p["nama_produk"]: p["id"] for p in daftar_produk}
+        produk_mgt_pilihan = st.selectbox("Pilih Reksa Dana", options=list(opsi_produk_mgt.keys()), key="mgt_prod")
+        produk_mgt_id = opsi_produk_mgt[produk_mgt_pilihan]
+        
+        # Ambil daftar periode yang tersedia untuk produk tersebut
+        try:
+            res_periode = supabase.table("metrik_bulanan").select("id, periode").eq("produk_id", produk_mgt_id).order("periode").execute()
+            data_periode = res_periode.data
+        except Exception as e:
+            st.error(f"Gagal mengambil periode: {e}")
+            data_periode = []
+            
+        if data_periode:
+            opsi_periode = {str(p["periode"]): p["id"] for p in data_periode}
+            periode_mgt_pilihan = st.selectbox("Pilih Periode untuk Dikelola", options=list(opsi_periode.keys()), key="mgt_per")
+            metrik_id = opsi_periode[periode_mgt_pilihan]
+            
+            # Ambil data spesifik untuk metrik_id tersebut
+            try:
+                res_metrik = supabase.table("metrik_bulanan").select("*").eq("id", metrik_id).execute()
+            except Exception as e:
+                st.error(f"Gagal mengambil data metrik: {e}")
+                res_metrik = None
+                
+            if res_metrik and res_metrik.data:
+                record = res_metrik.data[0]
+                
+                st.markdown("---")
+                st.write(f"### Edit Data: {produk_mgt_pilihan} ({periode_mgt_pilihan})")
+                
+                col_m1, col_m2 = st.columns(2)
+                with col_m1:
+                    aum_baru = st.number_input("AUM Baru (Rp)", value=float(record.get("aum", 0)), step=100000000.0, format="%.2f", key=f"edit_aum_{metrik_id}")
+                with col_m2:
+                    nav_baru = st.number_input("NAV per Unit Baru", value=float(record.get("nab_per_unit", 0)), step=10.0, format="%.4f", key=f"edit_nav_{metrik_id}")
+                
+                st.write("#### Edit Struktur Aset & Holdings")
+                col_k, col_h = st.columns(2)
+                with col_k:
+                    st.write("**Komposisi Aset**")
+                    df_komp_edit = pd.DataFrame(record.get("komposisi", []))
+                    if df_komp_edit.empty:
+                        df_komp_edit = pd.DataFrame([{"Kategori Baku": "Lainnya", "Porsi": "0.00%"}])
+                    edited_komp_mgt = st.data_editor(df_komp_edit, use_container_width=True, hide_index=True, key=f"edit_komp_{metrik_id}")
+                
+                with col_h:
+                    st.write("**Top 10 Holdings**")
+                    df_hold_edit = pd.DataFrame(record.get("top_holdings", []))
+                    if df_hold_edit.empty:
+                        df_hold_edit = pd.DataFrame([{"instrumen": "", "porsi": "0.00%"}])
+                    edited_hold_mgt = st.data_editor(df_hold_edit, num_rows="dynamic", use_container_width=True, hide_index=True, key=f"edit_hold_{metrik_id}")
+                
+                col_btn1, col_btn2 = st.columns([1, 1])
+                with col_btn1:
+                    if st.button("💾 Update Data", type="primary", use_container_width=True):
+                        try:
+                            payload_update = {
+                                "aum": aum_baru,
+                                "nab_per_unit": nav_baru,
+                                "komposisi": edited_komp_mgt.to_dict(orient='records'),
+                                "top_holdings": edited_hold_mgt.to_dict(orient='records')
+                            }
+                            supabase.table("metrik_bulanan").update(payload_update).eq("id", metrik_id).execute()
+                            st.success("✅ Data berhasil diupdate!")
+                            time.sleep(1)
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Gagal update data: {e}")
+                            
+                with col_btn2:
+                    if st.button("🗑️ Hapus Data", type="secondary", use_container_width=True):
+                        try:
+                            supabase.table("metrik_bulanan").delete().eq("id", metrik_id).execute()
+                            st.success("✅ Data berhasil dihapus!")
+                            time.sleep(1)
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Gagal hapus data: {e}")
+        else:
+            st.info("Belum ada data metrik historis yang tersimpan untuk produk ini.")
+    else:
+        st.info("Belum ada data produk di database.")
