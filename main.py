@@ -148,7 +148,7 @@ def konversi_aum_llm(teks_aum):
     
 # ANTARMUKA UTAMA
 
-st.title("Financial Data Intelligence")
+st.title("Fund Fact Sheet Data")
 tab_ekstraksi, tab_dasbor, tab_manajemen = st.tabs(["Ekstraksi Data", "Dasbor Analisis", "Manajemen Data"])
 
 with tab_ekstraksi:
@@ -260,10 +260,34 @@ with tab_ekstraksi:
                     # Cari file asli dari uploaded_files
                     matching_file = next((f for f in uploaded_files if f.name == data.get('filename')), None)
                     if matching_file:
-                        base64_pdf = base64.b64encode(matching_file.getvalue()).decode('utf-8')
-                        # Menggunakan tag embed agar tidak diblokir oleh kebijakan keamanan browser (CSP/Chrome)
-                        pdf_display = f'<embed src="data:application/pdf;base64,{base64_pdf}#toolbar=1" type="application/pdf" width="100%" height="800px" />'
-                        st.markdown(pdf_display, unsafe_allow_html=True)
+                        # Render halaman PDF sebagai gambar dengan kontrol zoom
+                        import pypdfium2 as pdfium
+                        import streamlit.components.v1 as stc
+                        
+                        zoom = st.slider("🔍 Zoom (%)", 50, 200, 100, step=10, key=f"zoom_{file_key}")
+                        
+                        matching_file.seek(0)
+                        pdf_doc = pdfium.PdfDocument(matching_file.getvalue())
+                        
+                        images_html = ""
+                        for page_idx in range(len(pdf_doc)):
+                            page = pdf_doc[page_idx]
+                            bitmap = page.render(scale=3)
+                            pil_image = bitmap.to_pil()
+                            buf = io.BytesIO()
+                            pil_image.save(buf, format="PNG")
+                            img_b64 = base64.b64encode(buf.getvalue()).decode()
+                            images_html += f'<div style="text-align:center; margin-bottom:8px;"><img src="data:image/png;base64,{img_b64}" style="width:100%;" /><p style="color:#999; font-size:11px; margin:2px 0 0;">Halaman {page_idx + 1}</p></div>'
+                        pdf_doc.close()
+                        
+                        html_content = f"""
+                        <div style="overflow:auto; height:770px; background:#e8e8e8; padding:10px; border-radius:8px;">
+                            <div style="width:{zoom}%; margin: 0 auto;">
+                                {images_html}
+                            </div>
+                        </div>
+                        """
+                        stc.html(html_content, height=800)
                     else:
                         st.warning("Pratinjau PDF tidak tersedia.")
 
